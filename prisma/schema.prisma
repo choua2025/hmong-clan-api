@@ -1,0 +1,407 @@
+// Vang Clan (Xeem Vaj) Association Management System — data model.
+//
+// SINGLE-CLAN system: there is intentionally NO Clan or SubClan table.
+// The clan (Vang) is a constant. The hierarchy is simply Household -> Members.
+//
+// Conventions (see claude.md §5):
+//   - All money uses Decimal(12,2) — never Float.
+//   - Names are stored bilingually (Hmong + Lao/English) where relevant.
+//   - Dues, Donation, and AidContribution all settle through a single Payment.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7: the connection URL lives in prisma.config.ts (for Migrate/CLI)
+  // and is passed to PrismaClient via the pg driver adapter (see src/lib/prisma.ts).
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  LEADER
+  TREASURER
+  MEMBER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum MemberStatus {
+  ACTIVE
+  DECEASED
+  MOVED
+}
+
+enum DuesStatus {
+  UNPAID
+  PENDING // slip uploaded, awaiting treasurer confirmation
+  PAID
+  WAIVED
+}
+
+enum PaymentStatus {
+  PENDING // recorded, slip may be scanned, awaiting human confirmation
+  CONFIRMED
+  REJECTED
+}
+
+enum AidCaseType {
+  FUNERAL
+  EMERGENCY
+  OTHER
+}
+
+enum AidCaseStatus {
+  OPEN
+  CLOSED
+}
+
+enum EventType {
+  NEW_YEAR
+  MEETING
+  WEDDING
+  FUNERAL
+  CEREMONY
+  OTHER
+}
+
+enum AttendeeStatus {
+  INVITED
+  GOING
+  DECLINED
+  ATTENDED
+}
+
+enum NotificationType {
+  EVENT
+  ANNOUNCEMENT
+  MUTUAL_AID
+  DOCUMENT
+  SYSTEM
+}
+
+// ─────────────────────────────────────────────────────────────
+// People & access
+// ─────────────────────────────────────────────────────────────
+
+/// The central unit: a Vang family. Dues attach here.
+model Household {
+  id        String   @id @default(uuid())
+  name      String // family/household label, e.g. "Vaj Tooj household"
+  address   String?
+  contact   String? // phone or other contact
+  notes     String?
+
+  // Head of household — a Member. Nullable so a household can be created
+  // before its members exist. SetNull on delete to avoid orphaning.
+  headMemberId String?    @unique
+  headMember   Member?    @relation("HouseholdHead", fields: [headMemberId], references: [id], onDelete: SetNull)
+
+  members          Member[]          @relation("HouseholdMembers")
+  dues             Dues[]
+  donations        Donation[]
+  aidCasesAffected MutualAidCase[]   @relation("AffectedHousehold")
+  aidContributions AidContribution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// An individual belonging to a household. Bilingual names.
+model Member {
+  id          String       @id @default(uuid())
+  householdId String
+  household   Household    @relation("HouseholdMembers", fields: [householdId], references: [id], onDelete: Cascade)
+
+  nameHmong String // Hmong name
+  nameLatin String // Lao/English name
+  gender    Gender?
+  dob       DateTime?
+  photoUrl  String?
+  status    MemberStatus @default(ACTIVE)
+
+  // Households this member heads (back-relation for HouseholdHead).
+  headsHousehold Household? @relation("HouseholdHead")
+
+  // Optional system login.
+  user User?
+
+  donations        Donation[]
+  aidContributions AidContribution[]
+  eventAttendances EventAttendee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([householdId])
+}
+
+/// A system login. May or may not be tied to a Member record.
+model User {
+  id           String  @id @default(uuid())
+  email        String  @unique
+  passwordHash String
+  role         Role    @default(MEMBER)
+  isActive     Boolean @default(true)
+
+  // Hashed current refresh token (rotated on refresh). Null = logged out.
+  refreshTokenHash String?
+
+  // Password-reset: hashed one-time secret + its expiry. Null when no reset is
+  // pending. The plaintext secret is only ever sent to the user (never stored).
+  resetTokenHash      String?
+  resetTokenExpiresAt DateTime?
+
+  memberId String? @unique
+  member   Member? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  // Audit back-relations.
+  confirmedPayments Payment[]       @relation("PaymentConfirmedBy")
+  openedAidCases    MutualAidCase[] @relation("AidCaseOpenedBy")
+  createdEvents     Event[]         @relation("EventCreatedBy")
+  announcements     Announcement[]
+  uploadedDocuments Document[]
+  createdNotifications Notification[]     @relation("NotificationCreatedBy")
+  notificationReads    NotificationRead[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// Money: Payment is the single settlement record
+// ─────────────────────────────────────────────────────────────
+
+/// One transaction record. Dues, Donation, and AidContribution each settle
+/// through exactly one Payment. No payment-method field by design.
+/// OCR/QR fields are ADVISORY only — a human must confirm before money is
+/// trusted (claude.md §5).
+model Payment {
+  id       String        @id @default(uuid())
+  amount   Decimal       @db.Decimal(12, 2)
+  currency String        @default("LAK")
+  slipUrl  String? // proof of transfer (uploaded slip)
+  paidAt   DateTime      @default(now())
+  status   PaymentStatus @default(PENDING)
+
+  // Advisory values extracted by QR decode / Tesseract OCR — never auto-trusted.
+  ocrAmount Decimal? @db.Decimal(12, 2)
+  ocrRaw    String?
+  reference String?
+
+  confirmedById String?
+  confirmedBy   User?     @relation("PaymentConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  confirmedAt   DateTime?
+  rejectReason  String?
+
+  // A payment settles at most one of these (one-to-one from the other side).
+  dues            Dues?
+  donation        Donation?
+  aidContribution AidContribution?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Periodic fee charged PER HOUSEHOLD (e.g. yearly).
+model Dues {
+  id          String     @id @default(uuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  period   String // e.g. "2026" or "2026-Q1"
+  amount   Decimal    @db.Decimal(12, 2)
+  currency String     @default("LAK")
+  status   DuesStatus @default(UNPAID)
+  dueDate  DateTime?
+
+  paymentId String?  @unique
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, period])
+  @@index([status])
+}
+
+/// Voluntary giving by a member or household, often event-tied.
+model Donation {
+  id String @id @default(uuid())
+
+  householdId String?
+  household   Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  memberId    String?
+  member      Member?    @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("LAK")
+  note     String?
+
+  paymentId String?  @unique
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+/// Coordinates support for a household during a funeral/emergency.
+model MutualAidCase {
+  id                  String        @id @default(uuid())
+  affectedHouseholdId String
+  affectedHousehold   Household     @relation("AffectedHousehold", fields: [affectedHouseholdId], references: [id], onDelete: Cascade)
+
+  type         AidCaseType
+  title        String
+  description  String?
+  targetAmount Decimal?      @db.Decimal(12, 2)
+  currency     String        @default("LAK")
+  status       AidCaseStatus @default(OPEN)
+
+  openedById String?
+  openedBy   User?   @relation("AidCaseOpenedBy", fields: [openedById], references: [id], onDelete: SetNull)
+  openedAt   DateTime @default(now())
+  closedAt   DateTime?
+
+  contributions AidContribution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+/// A household's / member's contribution toward a mutual-aid case.
+model AidContribution {
+  id     String        @id @default(uuid())
+  caseId String
+  case   MutualAidCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  householdId String?
+  household   Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  memberId    String?
+  member      Member?    @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("LAK")
+
+  paymentId String?  @unique
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([caseId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Events & communications
+// ─────────────────────────────────────────────────────────────
+
+model Event {
+  id          String    @id @default(uuid())
+  title       String
+  titleLao    String?
+  type        EventType @default(OTHER)
+  description String?
+  location    String?
+  startAt     DateTime
+  endAt       DateTime?
+
+  createdById String?
+  createdBy   User?   @relation("EventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  attendees EventAttendee[]
+  donations Donation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([startAt])
+}
+
+model EventAttendee {
+  id       String         @id @default(uuid())
+  eventId  String
+  event    Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  memberId String
+  member   Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  status   AttendeeStatus @default(INVITED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([eventId, memberId])
+}
+
+model Announcement {
+  id          String    @id @default(uuid())
+  title       String
+  body        String
+  pinned      Boolean   @default(false)
+  publishedAt DateTime?
+
+  authorId String?
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Document {
+  id       String  @id @default(uuid())
+  title    String
+  fileUrl  String
+  category String? // e.g. "bylaws", "minutes"
+
+  uploadedById String?
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Notification {
+  id      String           @id @default(uuid())
+  type    NotificationType
+  title   String
+  body    String?
+  linkUrl String?
+
+  createdById String?
+  createdBy   User?   @relation("NotificationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  readBy NotificationRead[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([createdAt])
+}
+
+model NotificationRead {
+  id             String       @id @default(uuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt])
+}

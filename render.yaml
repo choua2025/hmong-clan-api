@@ -1,0 +1,40 @@
+# Render blueprint for the Vang Clan (Xeem Vaj) Association API.
+#
+# The database is NOT declared here — it lives in Supabase. Set DATABASE_URL
+# in the Render dashboard to the Supabase *session pooler* string (port 5432,
+# user postgres.<project-ref>). The direct db.<ref>.supabase.co host is
+# IPv6-only and Render cannot reach it.
+services:
+  - type: web
+    name: hmong-clan-api
+    runtime: node
+    plan: free
+    # Seoul-hosted Supabase (ap-northeast-2); Singapore is Render's nearest region.
+    region: singapore
+    branch: main
+    # --include=dev is required: NODE_ENV=production would otherwise make
+    # `npm ci` skip typescript/prisma, which the build needs.
+    buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+      - key: BCRYPT_SALT_ROUNDS
+        value: "12"
+      - key: DEFAULT_CURRENCY
+        value: LAK
+      - key: CLOUDINARY_URL
+        sync: false

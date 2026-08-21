@@ -1,0 +1,137 @@
+# CI/CD for the Vang Clan (Xeem Vaj) Association API.
+#
+# Render's own auto-deploy is turned OFF (see `autoDeploy: false` in
+# render.yaml). Production is only ever updated by the `deploy` job below,
+# which runs after `ci` goes green — so a broken build can never reach the
+# live service.
+#
+# CI does not use a database. Migrations are applied by Render's build
+# command against the real Supabase database at deploy time.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR runs are pointless, but never cancel an in-flight deploy.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: Verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      # `npm ci` runs the postinstall `prisma generate`, which needs no
+      # database connection.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # Assembles the real compiled Express app and serves one request.
+      # createApp() never touches the database, so this needs no Postgres —
+      # it catches broken imports, bad route wiring and missing env vars,
+      # which a typecheck alone cannot see.
+      - name: Smoke test the built app
+        env:
+          NODE_ENV: production
+          # Never connected to; env.ts only requires the value to be present.
+          DATABASE_URL: postgresql://unused
+          JWT_ACCESS_SECRET: ci-access-secret-not-a-real-secret
+          JWT_REFRESH_SECRET: ci-refresh-secret-not-a-real-secret
+          CORS_ORIGINS: https://hmong-clan.vchoua05.workers.dev/
+        run: |
+          node -e "
+            const { createApp } = require('./dist/app');
+            const server = createApp().listen(4000, async () => {
+              try {
+                const res = await fetch('http://localhost:4000/api/health');
+                const body = await res.text();
+                console.log('GET /api/health ->', res.status, body);
+                if (!res.ok) throw new Error('health check returned ' + res.status);
+                server.close();
+              } catch (err) {
+                console.error(err);
+                process.exit(1);
+              }
+            });
+          "
+
+  deploy:
+    name: Deploy to Render
+    needs: ci
+    # The deploy hook always builds the branch the Render service tracks, so
+    # only ever fire it from main.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.RENDER_SERVICE_URL }}
+
+    steps:
+      - name: Trigger Render deploy
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL secret is not set." >&2
+            exit 1
+          fi
+          # The hook deploys the branch the Render service tracks (main).
+          response=$(curl -fsS -X POST "$DEPLOY_HOOK_URL")
+          echo "Render responded: $response"
+
+      # Render injects RENDER_GIT_COMMIT into the running service, and
+      # /api/health echoes it back. Matching it against this run's SHA proves
+      # the NEW build is live rather than the old instance still answering.
+      - name: Wait for the new commit to go live
+        env:
+          SERVICE_URL: ${{ vars.RENDER_SERVICE_URL }}
+        run: |
+          if [ -z "$SERVICE_URL" ]; then
+            echo "RENDER_SERVICE_URL variable is not set." >&2
+            exit 1
+          fi
+
+          echo "Waiting for commit $GITHUB_SHA at $SERVICE_URL"
+
+          for attempt in $(seq 1 60); do
+            # --max-time is generous: a free-plan instance may be cold-starting.
+            body=$(curl -fsS --max-time 60 "$SERVICE_URL/api/health" 2>/dev/null || true)
+            live=$(printf '%s' "$body" | jq -r '.commit // empty' 2>/dev/null || true)
+
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "Deploy live after $attempt attempt(s): $body"
+              exit 0
+            fi
+
+            echo "attempt $attempt/60 — live commit: ${live:-unreachable}"
+            sleep 15
+          done
+
+          echo "Timed out after 15 minutes waiting for $GITHUB_SHA." >&2
+          echo "Check the build logs in the Render dashboard." >&2
+          exit 1

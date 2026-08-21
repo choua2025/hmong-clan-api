@@ -14,7 +14,15 @@ import { notificationRoutes } from '../modules/notification/notification.routes'
 export const apiRoutes = Router();
 
 apiRoutes.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'vang-clan-management', time: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    service: 'vang-clan-management',
+    // Render injects RENDER_GIT_COMMIT into the running service. CI polls this
+    // after triggering a deploy to confirm the new build is actually live,
+    // rather than the previous instance still answering.
+    commit: process.env.RENDER_GIT_COMMIT ?? 'local',
+    time: new Date().toISOString(),
+  });
 });
 
 apiRoutes.use('/auth', authRoutes);

@@ -40,7 +40,11 @@ npm run db:seed               # optional: super admin + sample data
 npm run dev                   # http://localhost:4000
 ```
 
-Health check: `GET /api/health`.
+Health check: `GET /api/health`. On Render it also reports the deployed commit
+SHA, which the CI/CD pipeline polls to confirm a deploy landed.
+
+Deployment is automated — see [DEPLOYMENT.md](DEPLOYMENT.md) for the pipeline
+and the one-time Render/GitHub setup.
 
 Seeded development logins:
 

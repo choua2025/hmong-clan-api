@@ -12,6 +12,10 @@ services:
     # Seoul-hosted Supabase (ap-northeast-2); Singapore is Render's nearest region.
     region: singapore
     branch: main
+    # Deploys are driven by the GitHub Actions deploy hook, never by a raw
+    # push — see .github/workflows/ci-cd.yml. Leaving this on would let a
+    # build that failed CI reach production anyway.
+    autoDeploy: false
     # --include=dev is required: NODE_ENV=production would otherwise make
     # `npm ci` skip typescript/prisma, which the build needs.
     buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy

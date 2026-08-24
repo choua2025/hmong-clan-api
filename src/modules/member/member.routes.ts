@@ -12,7 +12,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { PERMISSIONS } from '../../config';
 export const memberRoutes = Router();
 
-memberRoutes.use(authenticate);
+// memberRoutes.use(authenticate);
 
 memberRoutes.get(
   '/',

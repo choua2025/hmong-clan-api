@@ -15,7 +15,7 @@ export const memberRoutes = Router();
 // memberRoutes.use(authenticate);
 
 memberRoutes.get(
-  '/',
+  '/get-all',
   validate({ query: listMemberQuerySchema }),
   asyncHandler(memberController.list),
 );

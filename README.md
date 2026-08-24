@@ -41,10 +41,10 @@ npm run dev                   # http://localhost:4000
 ```
 
 Health check: `GET /api/health`. On Render it also reports the deployed commit
-SHA, which the CI/CD pipeline polls to confirm a deploy landed.
+SHA, so you can confirm which build is live.
 
 Deployment is automated — see [DEPLOYMENT.md](DEPLOYMENT.md) for the pipeline
-and the one-time Render/GitHub setup.
+and the one-time Render setup.
 
 Seeded development logins:
 

@@ -1,78 +1,57 @@
 # Deployment — CI/CD to Render
 
 Production is the Render web service `hmong-clan-api`, backed by a Supabase
-Postgres database. The pipeline lives in
+Postgres database. The CI pipeline lives in
 [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml).
 
 ## How it works
 
 ```
-push / PR to main
+push to main
    │
-   ├─ ci job (always)
+   ├─ GitHub Actions "Verify"
    │    npm ci → prisma validate → typecheck → build
    │    → smoke test: assemble the app, serve GET /api/health
    │
-   └─ deploy job (push to main only, needs: ci)
-        POST Render deploy hook
-        → poll /api/health until .commit === the pushed SHA
+   └─ Render (Auto-Deploy: After CI Checks Pass)
+        waits for Verify to go green
+        → green: build & deploy    → red: no deploy
 ```
 
-CI runs **without a database**. The smoke test uses `createApp()`, which
-wires up Express and the routes but never connects to Postgres, so it catches
-broken imports, bad route wiring and missing env vars without needing one.
+**Deploys are Render's job, not the workflow's.** Render watches `main`
+directly, so there is no deploy step, no deploy hook, and **no GitHub secrets
+or variables to configure**. The gate comes from Render's Auto-Deploy mode:
+set to *After CI Checks Pass*, Render holds the deploy until every GitHub
+check on that commit succeeds. A failing build never reaches the live service.
 
-Render's own auto-deploy is **off** (`autoDeploy: false` in `render.yaml`).
-The only thing that deploys production is the `deploy` job, and it never runs
-unless `ci` is green — so a build that fails typecheck, has an invalid schema,
-or cannot assemble will not reach the live service.
+Render treats a check as passed if its conclusion is `success`, `neutral`, or
+`skipped` — a **cancelled** run does not count, which is why the workflow
+never cancels in-progress runs on `main`.
 
-The `deploy` job does not merely check that the service answers. Render
-injects `RENDER_GIT_COMMIT` into the running process, `/api/health` echoes it
-back, and CI waits until that value equals the SHA it just deployed. That
-distinguishes "the new build is live" from "the old instance is still
-answering", which a plain health check cannot do.
+CI runs **without a database**. The smoke test uses `createApp()`, which wires
+up Express and the routes but never connects to Postgres, so it catches broken
+imports, bad route wiring and missing env vars without needing one.
 
 ## One-time setup
 
-### 1. Render — turn off auto-deploy
+Just one dashboard toggle:
 
-`autoDeploy: false` only applies to services created from the blueprint. For
-an existing service, set it in the dashboard:
+**Render → hmong-clan-api → Settings → Build & Deploy → Auto-Deploy →
+"After CI Checks Pass".**
 
-**Render → hmong-clan-api → Settings → Build & Deploy → Auto-Deploy → No.**
+The three options are *On Commit* (deploys immediately, ungated),
+*After CI Checks Pass* (what we want), and *Off*. If it is left on *On
+Commit*, everything still deploys — just without waiting for CI, so a red
+build goes live.
 
-If you skip this, pushes deploy twice: once from Render's own trigger
-(ungated) and once from CI.
+This setting is dashboard-only; there is no `render.yaml` field for it, which
+is why `render.yaml` deliberately does not set `autoDeploy`.
 
-### 2. Render — create the deploy hook
+### Optional: protect main
 
-**Settings → Deploy Hook → copy the URL.** It looks like:
-
-```
-https://api.render.com/deploy/srv-XXXXXXXX?key=YYYYYYYY
-```
-
-Treat it as a secret — anyone holding it can deploy.
-
-### 3. GitHub — add the secret and variable
-
-Repo → **Settings → Secrets and variables → Actions**:
-
-| Kind     | Name                     | Value                                        |
-| -------- | ------------------------ | -------------------------------------------- |
-| Secret   | `RENDER_DEPLOY_HOOK_URL` | the deploy hook URL from step 2               |
-| Variable | `RENDER_SERVICE_URL`     | `https://hmong-clan-api.onrender.com` (no trailing slash) |
-
-`RENDER_SERVICE_URL` is a *variable*, not a secret — the deploy job prints it
-and uses it as the environment URL. If it were a secret the logs would be
-masked and unreadable.
-
-### 4. GitHub — protect main (recommended)
-
-**Settings → Branches → add rule for `main` → Require status checks →
-select `Verify`.** This stops a red PR from being merged in the first place,
-rather than catching it after the fact.
+**GitHub → Settings → Branches → add rule for `main` → Require status checks
+→ select `Verify`.** Stops a red PR being merged at all, rather than relying
+on Render to decline the deploy afterwards.
 
 ## Environment variables
 
@@ -116,26 +95,33 @@ edit an already-applied migration file.
 If you later want migrations verified automatically, add a `postgres:16`
 service container to the `ci` job and run `prisma migrate deploy` against it.
 
+## Checking what is live
+
+`GET /api/health` reports the running commit:
+
+```json
+{ "status": "ok", "commit": "a1b2c3d…", "time": "…" }
+```
+
+Render injects `RENDER_GIT_COMMIT`; compare it against `main` to confirm a
+deploy landed. Locally the field reads `local`.
+
 ## Rolling back
 
-The deploy hook always builds the tracked branch, so rollback is
 **Render → Deploys → the last good deploy → Rollback**, or revert the commit
 on `main` and let the pipeline deploy the revert.
 
 ## Troubleshooting
 
-**Deploy job times out after 15 minutes.** The hook fired but the new commit
-never went live. Check Render's build logs — usually a failed
-`migrate deploy` or a missing env var. The old instance is still up.
+**Pushed to main but nothing deployed.** Check the Actions tab — Render is
+waiting on `Verify`. A cancelled or failed run blocks the deploy by design.
+Re-run the workflow once it is fixed.
 
-**Health check unreachable during polling.** Normal for the first attempts on
-the free plan; a cold instance can take ~50s to wake. The poll allows 60
-attempts at 15s intervals.
+**It deployed even though CI was red.** Auto-Deploy is still on *On Commit*.
+Switch it to *After CI Checks Pass*.
 
-**`.commit` reads `local`.** `RENDER_GIT_COMMIT` was not present, meaning the
+**Health check slow to respond.** Normal on the free plan; a cold instance
+can take ~50s to wake.
+
+**`commit` reads `local`.** `RENDER_GIT_COMMIT` was not present, meaning the
 process is not running on Render.
-
-**VS Code flags `environment: production` as invalid.** The GitHub Actions
-extension checks environment names against those that already exist on the
-repo. GitHub creates the `production` environment automatically on the first
-deploy, after which the warning goes away. It is not a workflow error.

@@ -21,7 +21,7 @@ export function createApp() {
   if (!env.isProduction) app.use(morgan('dev'));
 
   app.get('/', (_req, res) => {
-    res.json({ status: 'ok', service: 'vang-clan-management', time: new Date().toISOString() });
+    res.json({ status: 'ok', service: 'vang-clan-managements', time: new Date().toISOString() });
   });
   app.use('/api', apiRoutes);
 

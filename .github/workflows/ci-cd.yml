@@ -33,6 +33,14 @@ jobs:
     name: Verify
     runs-on: ubuntu-latest
 
+    # prisma.config.ts resolves env('DATABASE_URL') when the config loads, so
+    # EVERY prisma command needs it set — including the `prisma generate` that
+    # npm runs as a postinstall hook during `npm ci`. Locally this is supplied
+    # by .env, which is gitignored and therefore absent here. CI never opens a
+    # connection, so a placeholder is enough.
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
     steps:
       - uses: actions/checkout@v4
 
@@ -62,8 +70,7 @@ jobs:
       - name: Smoke test the built app
         env:
           NODE_ENV: production
-          # Never connected to; env.ts only requires the value to be present.
-          DATABASE_URL: postgresql://unused
+          # DATABASE_URL comes from the job-level env above.
           JWT_ACCESS_SECRET: ci-access-secret-not-a-real-secret
           JWT_REFRESH_SECRET: ci-refresh-secret-not-a-real-secret
           CORS_ORIGINS: https://hmong-clan.vchoua05.workers.dev/

@@ -9,13 +9,17 @@ Postgres database. The CI pipeline lives in
 ```
 push to main
    │
-   ├─ GitHub Actions "Verify"
-   │    npm ci → prisma validate → typecheck → build
-   │    → smoke test: assemble the app, serve GET /api/health
+   ├─ GitHub Actions
+   │    "Verify"       npm ci → prisma validate → typecheck → build
+   │                    → smoke test: assemble the app, serve /api/health
+   │    "Docker image" docker build --target prod
+   │                    → prisma CLI present? client loads? non-root?
    │
    └─ Render (Auto-Deploy: After CI Checks Pass)
-        waits for Verify to go green
-        → green: build & deploy    → red: no deploy
+        waits for BOTH checks to go green
+        → docker build (same Dockerfile)
+        → preDeployCommand: prisma migrate deploy
+        → start container, health check /api/health
 ```
 
 **Deploys are Render's job, not the workflow's.** Render watches `main`
@@ -67,15 +71,39 @@ on Render to decline the deploy afterwards.
 `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` use `generateValue: true`, so
 Render generates them once. Rotating them logs every user out.
 
+## The image
+
+Render builds the repo's `Dockerfile` (`runtime: docker` in `render.yaml`),
+so production runs the same image as `docker build --target prod .` locally.
+There is no registry involved — Render builds from source on each deploy.
+
+Two constraints worth knowing:
+
+- **`prod` must remain the last stage.** Render has no blueprint field for
+  choosing a build target, so it builds whatever stage comes last. A stage
+  added below `prod` would silently ship to production instead.
+- **The image must stay non-root-friendly.** `prisma migrate deploy` writes
+  into `node_modules/@prisma/engines`, so the tree is owned by the `node`
+  user. A root-owned tree fails the pre-deploy step with
+  `Can't write to /app/node_modules/@prisma/engines`.
+
+CI builds the same target and asserts both the Prisma CLI and a loadable
+Linux Prisma client are present, since either missing breaks only at deploy
+time.
+
 ## Node version
 
-`.node-version` pins Node 22 for both Render and CI, so the two build on the
-same runtime. Change it in one place and both follow.
+`.node-version` pins Node 22 for CI. The Dockerfile pins the same major via
+its `NODE_VERSION` build arg — keep the two in step.
 
 ## Migrations
 
-Migrations run in Render's **build** command (`npx prisma migrate deploy`),
-against the real Supabase database.
+Migrations run as Render's **pre-deploy command** (`npx prisma migrate
+deploy`), against the real Supabase database. They cannot run during the
+build any more — a Docker build has no database access. The pre-deploy step
+runs inside the freshly built image after the build and before traffic
+shifts, so a failed migration aborts the deploy with the old instance still
+serving.
 
 **CI does not test migrations.** `prisma validate` only checks that
 `schema.prisma` is well-formed — it does not execute the SQL in

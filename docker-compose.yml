@@ -1,0 +1,109 @@
+# Local development stack for the Vang Clan (Xeem Vaj) Association API.
+#
+#   docker compose up            → db, migrations, then the API on :4000
+#   docker compose run --rm seed → load the sample data
+#
+# Note: DATABASE_URL is set inline rather than read from .env, because .env
+# points at localhost — inside the network the database host is `db`.
+
+name: vang-clan
+
+x-db-url: &db-url postgresql://postgres:postgres@db:5432/vang_clan?schema=public
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vang_clan
+    ports:
+      # Host port 5433, not 5432: a locally-installed PostgreSQL already owns
+      # 5432 on this machine. Connect from the host with
+      #   postgresql://postgres:postgres@localhost:5433/vang_clan
+      # Containers still reach it as db:5432 on the compose network.
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vang_clan"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: applies migrations, then exits. The API waits for it to finish.
+  # Uses the `deps` stage because `prisma` is a devDependency and so is not
+  # present in the prod image.
+  migrate:
+    build:
+      context: .
+      target: deps
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: *db-url
+    command: npx prisma migrate deploy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: dev
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: development
+      PORT: "4000"
+      DATABASE_URL: *db-url
+      CORS_ORIGINS: http://localhost:3000
+      # Development-only values. Production secrets come from Render.
+      JWT_ACCESS_SECRET: dev-access-secret-not-for-production
+      JWT_REFRESH_SECRET: dev-refresh-secret-not-for-production
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      BCRYPT_SALT_ROUNDS: "12"
+      DEFAULT_CURRENCY: LAK
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      # Source is mounted for hot reload. node_modules is deliberately NOT
+      # mounted — the container keeps its own Linux-built copy.
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - ./tsconfig.json:/app/tsconfig.json
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Opt-in: `docker compose run --rm seed`
+  seed:
+    build:
+      context: .
+      target: deps
+    profiles: ["tools"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: *db-url
+      JWT_ACCESS_SECRET: dev-access-secret-not-for-production
+      JWT_REFRESH_SECRET: dev-refresh-secret-not-for-production
+      BCRYPT_SALT_ROUNDS: "12"
+    volumes:
+      - ./prisma:/app/prisma
+    command: npm run db:seed
+    restart: "no"
+
+volumes:
+  db-data:

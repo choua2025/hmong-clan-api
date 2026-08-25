@@ -40,6 +40,25 @@ npm run db:seed               # optional: super admin + sample data
 npm run dev                   # http://localhost:4000
 ```
 
+### With Docker
+
+Brings up PostgreSQL, applies migrations, then starts the API with hot reload:
+
+```bash
+docker compose up                  # API on http://localhost:4000
+docker compose run --rm seed       # optional: sample data
+docker compose down -v             # stop and wipe the database volume
+```
+
+Host ports are overridable when something already owns them —
+`API_PORT=4200 docker compose up`. The database is published on **5433** by
+default to avoid clashing with a locally-installed PostgreSQL on 5432.
+
+The `prod` target (compiled `dist/`, production deps, non-root) is what ships:
+Render builds this same Dockerfile, so `docker build --target prod .` gives
+you the production image locally. Keep `prod` as the final stage — Render
+builds whatever stage comes last. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
 Health check: `GET /api/health`. On Render it also reports the deployed commit
 SHA, so you can confirm which build is live.
 

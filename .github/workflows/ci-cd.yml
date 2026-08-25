@@ -90,3 +90,48 @@ jobs:
               }
             });
           "
+
+  # Render builds this same Dockerfile to produce the production image, so a
+  # broken Dockerfile is a broken deploy. Building it here surfaces that on the
+  # PR instead of halfway through a Render build.
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the prod image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prod
+          # Loaded into the local daemon rather than pushed — Render builds
+          # its own image from source; this job only proves it can be built.
+          load: true
+          push: false
+          tags: vang-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Guards the two things that break silently inside the image and only
+      # surface during a Render deploy.
+      - name: Verify the image can run migrations
+        run: |
+          # The prisma CLI must exist (it arrives as a peer dependency of
+          # @prisma/client) or Render's preDeployCommand cannot run.
+          docker run --rm -e DATABASE_URL="postgresql://x:x@localhost:5432/x" \
+            vang-api:ci npx prisma --version
+
+          # The Prisma client must load — proves `prisma generate` produced a
+          # LINUX engine rather than the host's.
+          docker run --rm vang-api:ci \
+            node -e "require('@prisma/client'); console.log('prisma client loads OK')"
+
+      - name: Verify the image runs as a non-root user
+        run: |
+          user=$(docker run --rm vang-api:ci whoami)
+          echo "container user: $user"
+          [ "$user" = "node" ] || { echo "expected to run as 'node'" >&2; exit 1; }

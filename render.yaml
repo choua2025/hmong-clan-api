@@ -7,7 +7,14 @@
 services:
   - type: web
     name: hmong-clan-api
-    runtime: node
+    # Render builds the repo's Dockerfile, so what runs in production is the
+    # same image you get from `docker build --target prod .` locally.
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # There is no blueprint field for selecting a build stage, so Render
+    # builds the LAST stage in the Dockerfile. `prod` is deliberately last —
+    # do not add a stage after it or Render will ship that instead.
     plan: free
     # Seoul-hosted Supabase (ap-northeast-2); Singapore is Render's nearest region.
     region: singapore
@@ -17,10 +24,13 @@ services:
     # (Settings → Build & Deploy → Auto-Deploy) and has no blueprint field —
     # pinning autoDeploy here could override that choice with a plain
     # deploy-on-every-commit. See DEPLOYMENT.md.
-    # --include=dev is required: NODE_ENV=production would otherwise make
-    # `npm ci` skip typescript/prisma, which the build needs.
-    buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy
-    startCommand: npm start
+    # Migrations no longer ride along in the build: a Docker build has no
+    # database access. preDeployCommand runs inside the freshly built image,
+    # after the build and before any traffic is shifted, so a failed migration
+    # aborts the deploy and leaves the running instance untouched.
+    preDeployCommand: npx prisma migrate deploy
+    # No buildCommand/startCommand: the Dockerfile owns both. The container
+    # starts via its CMD (node dist/server.js).
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV

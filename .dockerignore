@@ -1,0 +1,24 @@
+# Never bake host-built artifacts into the image. node_modules in particular
+# would carry the host's platform-specific Prisma query engine (a Windows
+# .dll.node here), which cannot load inside a Linux container.
+node_modules
+dist
+
+# Secrets — the container gets its config from compose / the platform.
+.env
+.env.local
+.env.*.local
+
+# Not needed at build time
+.git
+.github
+.gitignore
+*.md
+uploads
+*.log
+npm-debug.log*
+.vscode
+.idea
+Dockerfile
+.dockerignore
+docker-compose.yml

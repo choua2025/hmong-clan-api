@@ -43,6 +43,13 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: *db-url
+    volumes:
+      # Mount the working tree's migrations rather than trusting the copy
+      # baked into the image at build time. Without this, `docker compose up`
+      # reuses an existing image and silently skips migrations added since it
+      # was built.
+      - ./prisma:/app/prisma
+      - ./prisma.config.ts:/app/prisma.config.ts
     command: npx prisma migrate deploy
     restart: "no"
 

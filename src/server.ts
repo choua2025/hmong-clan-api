@@ -9,7 +9,7 @@ async function main() {
   const app = createApp();
   const server = app.listen(env.port, () => {
     console.log(
-      `[server] listening on port ${env.port}:${env.port} (${env.nodeEnv})`,
+      `[server] listening on port http://localhost:${env.port} (${env.nodeEnv})`,
     );
   });
 

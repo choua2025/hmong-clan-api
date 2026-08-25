@@ -25,5 +25,17 @@ export const PERMISSIONS = {
   DOCUMENT_MANAGEMENT: [ROLE.LEADER],
   ASSOCIATION_REPORTS: [ROLE.LEADER, ROLE.TREASURER],
   FINANCE_REPORTS: [ROLE.TREASURER],
+
+  // Governance: who sits on the committee is a leadership decision.
+  OFFICER_MANAGEMENT: [ROLE.LEADER],
+
+  // Shared clan property: leaders own the register; either leader or
+  // treasurer may approve/check out a loan (deposits and fees are money).
+  ASSET_MANAGEMENT: [ROLE.LEADER],
+  ASSET_LOAN_APPROVAL: [ROLE.LEADER, ROLE.TREASURER],
+
+  // Expenses: a leader approves the spend, the treasurer disburses the cash.
+  EXPENSE_APPROVAL: [ROLE.LEADER],
+  EXPENSE_DISBURSEMENT: [ROLE.TREASURER],
 } as const satisfies Record<string, readonly Role[]>;
 

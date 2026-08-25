@@ -10,6 +10,9 @@ import { eventRoutes } from '../modules/event/event.routes';
 import { announcementRoutes } from '../modules/announcement/announcement.routes';
 import { documentRoutes } from '../modules/document/document.routes';
 import { notificationRoutes } from '../modules/notification/notification.routes';
+import { officerRoutes } from '../modules/officer/officer.routes';
+import { assetRoutes } from '../modules/asset/asset.routes';
+import { expenseRoutes } from '../modules/expense/expense.routes';
 
 export const apiRoutes = Router();
 
@@ -36,3 +39,6 @@ apiRoutes.use('/events', eventRoutes);
 apiRoutes.use('/announcements', announcementRoutes);
 apiRoutes.use('/documents', documentRoutes);
 apiRoutes.use('/notifications', notificationRoutes);
+apiRoutes.use('/officers', officerRoutes);
+apiRoutes.use('/assets', assetRoutes);
+apiRoutes.use('/expenses', expenseRoutes);

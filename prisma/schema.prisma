@@ -111,6 +111,7 @@ model Household {
   donations        Donation[]
   aidCasesAffected MutualAidCase[]   @relation("AffectedHousehold")
   aidContributions AidContribution[]
+  assetLoans       AssetLoan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -138,6 +139,8 @@ model Member {
   donations        Donation[]
   aidContributions AidContribution[]
   eventAttendances EventAttendee[]
+  officeTerms      OfficeTerm[] @relation("MemberOfficeTerms")
+  assetLoans       AssetLoan[]  @relation("MemberAssetLoans")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -172,6 +175,11 @@ model User {
   uploadedDocuments Document[]
   createdNotifications Notification[]     @relation("NotificationCreatedBy")
   notificationReads    NotificationRead[]
+  appointedOfficeTerms OfficeTerm[] @relation("OfficeTermAppointedBy")
+  requestedExpenses    Expense[]    @relation("ExpenseRequestedBy")
+  approvedExpenses     Expense[]    @relation("ExpenseApprovedBy")
+  disbursedExpenses    Expense[]    @relation("ExpenseDisbursedBy")
+  approvedAssetLoans   AssetLoan[]  @relation("AssetLoanApprovedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -278,6 +286,7 @@ model MutualAidCase {
   closedAt   DateTime?
 
   contributions AidContribution[]
+  expenses      Expense[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -327,6 +336,8 @@ model Event {
 
   attendees EventAttendee[]
   donations Donation[]
+  expenses   Expense[]
+  assetLoans AssetLoan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -404,4 +415,224 @@ model NotificationRead {
 
   @@unique([notificationId, userId])
   @@index([userId, readAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Governance: office terms
+// ─────────────────────────────────────────────────────────────
+
+enum OfficePosition {
+  PRESIDENT
+  VICE_PRESIDENT
+  SECRETARY
+  TREASURER
+  COMMITTEE_MEMBER
+  ADVISOR
+}
+
+model OfficeTerm {
+  id       String @id @default(uuid())
+  memberId String
+  member   Member @relation("MemberOfficeTerms", fields: [memberId], references: [id], onDelete: Cascade)
+
+  position   OfficePosition
+  titleHmong String?
+  titleLao   String?
+
+  startedAt DateTime
+  endedAt   DateTime?
+
+  isCurrent Boolean?
+
+  appointedById String?
+  appointedBy   User?   @relation("OfficeTermAppointedBy", fields: [appointedById], references: [id], onDelete: SetNull)
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([position, isCurrent])
+  @@index([memberId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shared assets
+// ─────────────────────────────────────────────────────────────
+
+enum AssetCategory {
+  KITCHENWARE
+  FURNITURE
+  TENT
+  SOUND_EQUIPMENT
+  CEREMONIAL
+  VEHICLE
+  LAND
+  BUILDING
+  OTHER
+}
+
+enum AssetCondition {
+  NEW
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+}
+
+enum AssetStatus {
+  AVAILABLE
+  UNDER_REPAIR
+  DISPOSED
+}
+
+model Asset {
+  id          String        @id @default(uuid())
+  nameHmong   String
+  nameLatin   String
+  category    AssetCategory @default(OTHER)
+  description String?
+
+  quantity Int    @default(1)
+  unit     String @default("piece")
+
+  condition AssetCondition @default(GOOD)
+  status    AssetStatus    @default(AVAILABLE)
+
+  acquiredAt      DateTime?
+  acquisitionCost Decimal?  @db.Decimal(12, 2)
+  currency        String    @default("LAK")
+
+  location String?
+  photoUrl String?
+  serialNo String?
+  notes    String?
+
+  loans    AssetLoan[]
+  expenses Expense[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([status])
+}
+
+enum AssetLoanStatus {
+  REQUESTED
+  APPROVED
+  OUT
+  RETURNED
+  OVERDUE
+  LOST
+}
+
+model AssetLoan {
+  id      String @id @default(uuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  householdId String?
+  household   Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  memberId    String?
+  member      Member?    @relation("MemberAssetLoans", fields: [memberId], references: [id], onDelete: SetNull)
+
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  quantity         Int @default(1)
+  quantityReturned Int @default(0)
+
+  status AssetLoanStatus @default(REQUESTED)
+
+  requestedAt  DateTime  @default(now())
+  dueAt        DateTime?
+  checkedOutAt DateTime?
+  returnedAt   DateTime?
+
+  conditionOnReturn AssetCondition?
+  depositAmount     Decimal?        @db.Decimal(12, 2)
+  feeAmount         Decimal?        @db.Decimal(12, 2)
+  currency          String          @default("LAK")
+
+  approvedById String?
+  approvedBy   User?   @relation("AssetLoanApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  notes        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assetId, status])
+  @@index([eventId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Expenses: money leaving the association
+// ─────────────────────────────────────────────────────────────
+
+enum ExpenseCategory {
+  FOOD
+  VENUE
+  TRANSPORT
+  SUPPLIES
+  HONORARIUM
+  UTILITIES
+  MAINTENANCE
+  ADMIN
+  OTHER
+}
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+  VOID
+}
+
+model Expense {
+  id          String          @id @default(uuid())
+  title       String
+  titleLao    String?
+  description String?
+  category    ExpenseCategory @default(OTHER)
+
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("LAK")
+
+  incurredAt DateTime @default(now())
+
+  eventId   String?
+  event     Event?         @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  aidCaseId String?
+  aidCase   MutualAidCase? @relation(fields: [aidCaseId], references: [id], onDelete: SetNull)
+  assetId   String?
+  asset     Asset?         @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  payeeName  String?
+  payeePhone String?
+
+  receiptUrl String?
+
+  status ExpenseStatus @default(DRAFT)
+
+  requestedById String?
+  requestedBy   User?   @relation("ExpenseRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  approvedById String?
+  approvedBy   User?     @relation("ExpenseApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+
+  disbursedById String?
+  disbursedBy   User?     @relation("ExpenseDisbursedBy", fields: [disbursedById], references: [id], onDelete: SetNull)
+  disbursedAt   DateTime?
+
+  rejectReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([eventId])
+  @@index([incurredAt])
 }

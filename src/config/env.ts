@@ -54,9 +54,27 @@ export const env = {
   bcryptSaltRounds: toInt('BCRYPT_SALT_ROUNDS', 12),
 
   upload: {
-    cloudinaryUrl: optional('CLOUDINARY_URL', ''),
+    // Cloudinary is used when a cloud name is configured; otherwise uploads
+    // fall back to local disk under `dir`. The account is shared with other
+    // projects, so every asset this app writes lives under `folder`.
+    cloudinary: {
+      cloudName: optional('CLOUDINARY_CLOUD_NAME', ''),
+      apiKey: optional('CLOUDINARY_API_KEY', ''),
+      apiSecret: optional('CLOUDINARY_API_SECRET', ''),
+      folder: optional('CLOUDINARY_FOLDER', 'hmong_clan_image'),
+    },
     dir: optional('UPLOAD_DIR', 'uploads'),
   },
 
   defaultCurrency: optional('DEFAULT_CURRENCY', 'LAK'),
 } as const;
+
+/**
+ * Cloudinary is only usable when all three credentials are present — a partial
+ * config silently uploading to local disk in production would be worse than
+ * failing loudly, so callers check this rather than the cloud name alone.
+ */
+export const isCloudinaryConfigured: boolean =
+  env.upload.cloudinary.cloudName !== '' &&
+  env.upload.cloudinary.apiKey !== '' &&
+  env.upload.cloudinary.apiSecret !== '';

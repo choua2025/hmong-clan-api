@@ -8,7 +8,8 @@ export const officerController = {
   },
 
   async board(_req: Request, res: Response) {
-    res.json({ positions: await officerService.board() });
+    // board() already returns { positions, actingPresident, totalSitting }.
+    res.json(await officerService.board());
   },
 
   async getById(req: Request, res: Response) {

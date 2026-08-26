@@ -49,7 +49,12 @@ async function assertApprovalAuthority(user: AuthUser) {
     throw forbidden('Approving an expense requires a login linked to a member record');
   }
   const term = await prisma.officeTerm.findFirst({
-    where: { memberId: user.memberId, isCurrent: true, position: { in: APPROVING_OFFICES } },
+    // A term is sitting while it holds a seat key; retired terms store null.
+    where: {
+      memberId: user.memberId,
+      currentSeat: { not: null },
+      position: { in: APPROVING_OFFICES },
+    },
     select: { id: true },
   });
   if (!term) {

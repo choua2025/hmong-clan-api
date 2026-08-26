@@ -442,7 +442,16 @@ model OfficeTerm {
   startedAt DateTime
   endedAt   DateTime?
 
-  isCurrent Boolean?
+  /// Encodes BOTH "is this term sitting?" and "how many may sit at once?".
+  ///   "PRESIDENT"                    single seat — a 2nd sitting one collides
+  ///   "COMMITTEE_MEMBER:<memberId>"  multi seat — distinct per holder, so any
+  ///                                  number fit, but one person cannot hold
+  ///                                  the same office twice concurrently
+  ///   null                           retired (Postgres NULLs never collide,
+  ///                                  so history accumulates freely)
+  /// Derive `isCurrent` from this rather than storing it separately — two
+  /// columns for one fact will drift. See officer.service.ts → seatKey().
+  currentSeat String? @unique
 
   appointedById String?
   appointedBy   User?   @relation("OfficeTermAppointedBy", fields: [appointedById], references: [id], onDelete: SetNull)
@@ -451,8 +460,8 @@ model OfficeTerm {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([position, isCurrent])
   @@index([memberId])
+  @@index([position])
 }
 
 // ─────────────────────────────────────────────────────────────
